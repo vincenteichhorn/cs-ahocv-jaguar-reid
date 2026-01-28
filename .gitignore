@@ -4,3 +4,4 @@ wandb/
 checkpoints/
 __pycache__/
 .env
+.vscode/
