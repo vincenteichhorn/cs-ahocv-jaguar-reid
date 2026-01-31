@@ -1,16 +1,17 @@
+import gc
 from pathlib import Path
-import numpy as np
+from typing import Callable, Dict, Literal, Tuple
 import pandas as pd
 from sklearn.calibration import LabelEncoder
 from sklearn.model_selection import train_test_split
 import torch
-from torch.utils.data import Dataset, Sampler
-from collections import defaultdict
+from torch.utils.data import Dataset, DataLoader
+from torchvision import transforms
+from PIL import Image, UnidentifiedImageError
+from tqdm import tqdm
 
-from jaguar.embedding_models import EmbeddingModel
 
-
-def get_data(data_path: str, validation_split_size=0.2, seed=42):
+def get_data(data_path: str, validation_split_size=0.2, seed=42) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, int, LabelEncoder]:
     """Get dataset located at `path`.
 
     Args:
@@ -33,113 +34,167 @@ def get_data(data_path: str, validation_split_size=0.2, seed=42):
         stratify=train_df["ground_truth"],
     )
 
-    test_data = pd.read_csv(data_path / "test.csv")
-    test_a_data = test_data.copy()
-    test_a_data["filename"] = test_a_data["query_image"].apply(lambda x: str(data_path / "test/test" / x))
-    test_a_data["label_encoded"] = -1  # Dummy labels for test set
-    test_b_data = test_data.copy()
-    test_b_data["filename"] = test_b_data["gallery_image"].apply(lambda x: str(data_path / "test/test" / x))
-    test_b_data["label_encoded"] = -1  # Dummy labels for test set
+    test_data_all = pd.read_csv(data_path / "test.csv")
+    test_data = test_data_all.copy().drop(columns=["gallery_image"])
+    test_data = test_data.drop_duplicates(subset=["query_image"]).reset_index(drop=True)
+    test_data["filename"] = test_data["query_image"].apply(lambda x: str(data_path / "test/test" / x))
+    test_data["label_encoded"] = -1  # Dummy labels for test set
 
-    return train_data, val_data, test_a_data, test_b_data, num_classes, label_encoder
+    return train_data, val_data, test_data, num_classes, label_encoder
 
 
-class EmbeddingDataset(Dataset):
+def get_dataloaders(
+    data_dir: str,
+    validation_split_size: float,
+    seed: int,
+    batch_size: int,
+    image_size: int,
+    cache_dir: str,
+    train_process_fn: Callable = None,
+    val_process_fn: Callable = None,
+    mode: Literal["segmented", "background"] = "background",
+) -> Tuple[DataLoader, DataLoader, DataLoader, int, LabelEncoder]:
+    """
+    Get dataloaders for training, validation, test query, and test gallery datasets.
+
+    Args:
+        data_dir (str): Path to the dataset.
+        validation_split_size (float): Proportion of the dataset to include in the validation split.
+        seed (int): Random seed for reproducibility.
+        batch_size (int): Batch size for the dataloaders.
+        image_size (int): Size to which images will be resized.
+        cache_dir (str): Directory to cache processed images.
+        process_fn (Callable, optional): Function to process images. Defaults to None.
+        mode (Literal["segmented", "background"], optional): Mode for image processing. Defaults to "segmented".
+    Returns:
+        Tuple[DataLoader, DataLoader, DataLoader, int, LabelEncoder]: Training dataloader, validation dataloader,
+        test dataloader, number of classes, and label encoder.
+    """
+    train_data, val_data, test_gallery, num_classes, label_encoder = get_data(
+        data_dir,
+        validation_split_size=validation_split_size,
+        seed=seed,
+    )
+
+    train_dataset = ImageDataset(train_data, prewarm=True, image_size=image_size, cache_dir=cache_dir, key="train", process_fn=train_process_fn, mode=mode)
+    train_dataloader = DataLoader(
+        train_dataset, batch_size=batch_size, shuffle=True, pin_memory=True, num_workers=12, prefetch_factor=2, persistent_workers=True
+    )
+
+    validation_dataset = ImageDataset(val_data, prewarm=True, image_size=image_size, cache_dir=cache_dir, key="val", process_fn=val_process_fn, mode=mode)
+    validation_dataloader = DataLoader(
+        validation_dataset, batch_size=batch_size, shuffle=False, pin_memory=True, num_workers=4, prefetch_factor=2, persistent_workers=True
+    )
+
+    test_dataset = ImageDataset(test_gallery, prewarm=True, image_size=image_size, cache_dir=cache_dir, key="test", process_fn=val_process_fn, mode=mode)
+    test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, pin_memory=True, num_workers=4, prefetch_factor=2, persistent_workers=True)
+    return train_dataloader, validation_dataloader, test_dataloader, num_classes, label_encoder
+
+
+def get_base_transform():
+    base_transform = transforms.Compose(
+        [
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ]
+    )
+    return base_transform
+
+
+def get_resize_transform(image_size: int):
+    resize_transform = transforms.Compose(
+        [
+            transforms.Resize((image_size, image_size)),
+        ]
+    )
+    return resize_transform
+
+
+class ImageDataset(Dataset):
     def __init__(
         self,
         data: pd.DataFrame,
-        embedding_model: EmbeddingModel,
-        key="train",
-        image_column="filename",
-        label_column="label_encoded",
-        cache_folder="./embeddings",
+        image_column: str = "filename",
+        label_column: str = "label_encoded",
+        image_size: int = 384,
+        process_fn: Callable = None,
+        mode: Literal["segmented", "background"] = "segmented",
+        cache_dir: str = "./cache",
+        key: str = "train",
+        prewarm: bool = True,
+        verbose: bool = True,
     ):
         self.data = data
         self.image_column = image_column
+        self.image_paths = data[image_column].tolist()
         self.label_column = label_column
+        self.labels = data[label_column].tolist()
+        self.process_fn = process_fn if process_fn is not None else get_base_transform()
+        self.resize_transform = get_resize_transform(image_size)
+        self.mode = mode
+        self.verbose = verbose
 
-        self.unique_filepaths = sorted(data[image_column].unique().tolist())
-        self.unique_filenames = [f.split("/")[-1] for f in self.unique_filepaths]
-        self.cache_file = Path(cache_folder) / f"{embedding_model.__class__.__name__.lower()}_{key}_embeddings.npz"
-        self.cache_file.parent.mkdir(parents=True, exist_ok=True)
+        # Initialize Cache
+        self.cache_dir = Path(cache_dir) / f"{key}_{mode}_{image_size}"
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
 
-        unique_embeddings = self._get_unique_embeddings(embedding_model)
+        self.to_tensor = transforms.ToTensor()
 
-        self.fn_to_idx = {fn: i for i, fn in enumerate(self.unique_filepaths)}
-        self.unique_embeddings = torch.from_numpy(unique_embeddings)
-        self.all_embeddings = self.get_embeddings()
+        if prewarm:
+            self._prewarm()
 
-        self.labels = data[label_column].values
+    def _prewarm(self):
+        if not all(self._get_cache_path(p).exists() for p in self.image_paths):
+            prewarm_loader = DataLoader(
+                self,
+                batch_size=64,
+                shuffle=False,
+                num_workers=4,
+            )
+            for _ in tqdm(prewarm_loader, desc=f"Prewarming cache for {self.cache_dir.name} dataset", total=len(prewarm_loader), disable=not self.verbose):
+                pass
 
-    def _get_unique_embeddings(self, embedding_model):
-        """Handles the logic of loading from cache or extracting fresh."""
-        if self.cache_file.exists():
-            print(f"Loading cached embeddings from {self.cache_file}")
-            with np.load(self.cache_file, allow_pickle=True) as z_file:
-                cached_fns = [f.split("/")[-1] for f in list(z_file["filenames"])]
+    def _get_cache_path(self, image_path: str) -> Path:
+        source_path = Path(image_path)
+        cache_file = self.cache_dir / f"{source_path.stem}.pt"
+        return cache_file
 
-                if cached_fns == self.unique_filenames:
-                    return z_file["embeddings"]
-                else:
-                    print("Cache mismatch (unique filenames changed). Re-extracting...")
+    def load_image(self, image_path: str) -> torch.Tensor:
+        cache_file = self._get_cache_path(image_path)
 
-        print(f"Extracting embeddings for {len(self.unique_filepaths)} unique images...")
-        embeddings = embedding_model.extract_embeddings(self.unique_filepaths, batch_size=32, verbose=True)
+        if cache_file.exists():
+            try:
+                return torch.load(cache_file, weights_only=True)
+            except (UnidentifiedImageError, OSError):
+                # If the cache is corrupt, remove it and fall through to recreation
+                cache_file.unlink(missing_ok=True)
 
-        emb_np = embeddings.cpu().numpy() if torch.is_tensor(embeddings) else embeddings
+        # Re-create the image from source
 
-        np.savez_compressed(
-            self.cache_file,
-            embeddings=emb_np,
-            filenames=np.array(self.unique_filenames, dtype=object),
-        )
-        return emb_np
+        if self.mode == "segmented":
+            img = Image.open(image_path).convert("RGBA")
+            black_bg = Image.new("RGB", img.size, (0, 0, 0))
+            black_bg.paste(img, mask=img.split()[3])  # 3 is the alpha channel
+            processed_img = self.resize_transform(black_bg)
+        else:
+            img = Image.open(image_path).convert("RGB")
+            img = self.resize_transform(img)
+            processed_img = img
 
-    def get_embeddings(self):
-        return torch.stack([self.unique_embeddings[self.fn_to_idx[fn]] for fn in self.data[self.image_column]])
+        tensor_img = self.to_tensor(processed_img)
+        torch.save(tensor_img, cache_file, _use_new_zipfile_serialization=False)
+        return tensor_img
 
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, idx):
-
-        embedding = self.all_embeddings[idx]
+        image_path = self.image_paths[idx]
         label = self.labels[idx]
 
-        return embedding, label
+        image = self.load_image(image_path)
 
+        if self.process_fn is not None:
+            image = self.process_fn(image)
 
-class PKSampler(Sampler):
-    def __init__(self, labels, p, k):
-        self.p = p
-        self.k = k
-        self.labels = np.array(labels)
-        self.unique_labels = np.unique(self.labels)
-
-        # Group indices by label
-        self.label_to_indices = defaultdict(list)
-        for idx, label in enumerate(self.labels):
-            self.label_to_indices[label].append(idx)
-
-        # Filter out classes that don't have enough samples to satisfy K
-        self.valid_labels = [lbl for lbl in self.unique_labels if len(self.label_to_indices[lbl]) >= k]
-
-    def __iter__(self):
-        # Calculate how many full PK batches we can create
-        num_batches = len(self.labels) // (self.p * self.k)
-
-        for _ in range(num_batches):
-            # Select P identities
-            selected_labels = np.random.choice(self.valid_labels, self.p, replace=False)
-
-            indices = []
-            for lbl in selected_labels:
-                # Select K samples for each identity
-                targ_indices = self.label_to_indices[lbl]
-                indices.extend(np.random.choice(targ_indices, self.k, replace=False))
-
-            # Yielding indices in a single batch
-            yield indices
-
-    def __len__(self):
-        return len(self.labels) // (self.p * self.k)
+        return image, label

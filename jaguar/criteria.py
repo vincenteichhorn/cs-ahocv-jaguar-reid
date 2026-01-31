@@ -4,38 +4,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-class EmbeddingProjection(nn.Module):
-
-    def __init__(self, input_dim=1536, hidden_dim=512, output_dim=256, dropout=0.3):
-        super().__init__()
-
-        self.network = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
-            nn.BatchNorm1d(hidden_dim),
-            nn.ReLU(inplace=True),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim, output_dim),
-            nn.BatchNorm1d(output_dim),
-        )
-
-        self._init_weights()
-
-    def _init_weights(self):
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.BatchNorm1d):
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
-
-    def forward(self, x):
-        embeddings = self.network(x)
-        embeddings = F.normalize(embeddings, p=2, dim=1)
-        return embeddings
-
-
 class ArcFaceLayer(nn.Module):
 
     def __init__(self, embedding_dim, num_classes, margin=0.5, scale=64.0):

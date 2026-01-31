@@ -10,15 +10,15 @@ from pathlib import Path
 import numpy as np
 import wandb
 
-from jaguarv2.components import DINOv3, MegaDescriptor, VielleichtguarModel, EmbeddingProjection
+from jaguarv2.components import MegaDescriptor, VielleichtguarModel, EmbeddingProjection
 from jaguarv2.criteria import ArcFaceCriterion
 from jaguarv2.datasets import get_dataloaders
 from jaguarv2.submission import build_submission
 from jaguarv2.train import train_epoch, validate_epoch
 
 PROJECT = "jaguar-reid-josefandvincent"
-GROUP = "_test"
-RUN_NAME = f"{GROUP}-testugar-model"
+GROUP = "00_baseline"
+RUN_NAME = f"{GROUP}-megadescriptor-projection-arcface"
 
 BASE_CONFIG = {
     "random_seed": 42,
@@ -37,7 +37,7 @@ EXPERIMENT_CONFIG = {
     "output_dim": 256,
     "dropout": 0.3,
     "weight_decay": 1e-4,
-    "learning_rate": 5e-4,  # 1e-4,
+    "learning_rate": 5e-4,
     "arcface_margin": 0.5,
     "arcface_scale": 64.0,
     "patience": 10,
@@ -60,18 +60,8 @@ BASE_CONFIG["checkpoint_dir"].mkdir(exist_ok=True)
 checkpoint_path = BASE_CONFIG["checkpoint_dir"] / f"{RUN_NAME}_best.pth"
 submission_path = BASE_CONFIG["checkpoint_dir"] / f"{RUN_NAME}_submission.csv"
 
-backbone = DINOv3(freeze=not EXPERIMENT_CONFIG["train_backbone"], cache_folder=BASE_CONFIG["embeddings_dir"])
+backbone = MegaDescriptor(freeze=not EXPERIMENT_CONFIG["train_backbone"], cache_folder=BASE_CONFIG["embeddings_dir"])
 base_transforms = backbone.get_transforms()
-augmentation_transforms = transforms.Compose(
-    [
-        transforms.RandomHorizontalFlip(p=0.5),
-        transforms.RandomApply([transforms.RandomRotation(degrees=30, expand=False, fill=0)], p=0.5),
-        transforms.RandomAffine(degrees=0, translate=(0.1, 0.1), fill=0),
-        transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.1, hue=0.05),
-        transforms.RandomApply([transforms.GaussianBlur(kernel_size=(3, 3), sigma=(0.1, 2.0))], p=0.3),
-        *base_transforms.transforms,
-    ]
-)
 
 train_dataloader, validation_dataloader, test_dataloader, num_classes, label_encoder = get_dataloaders(
     data_dir=BASE_CONFIG["data_dir"],
@@ -82,7 +72,7 @@ train_dataloader, validation_dataloader, test_dataloader, num_classes, label_enc
     cache_dir=BASE_CONFIG["cache_dir"],
     train_process_fn=base_transforms,
     val_process_fn=base_transforms,
-    mode="segmented",  # segmented
+    mode="background",
 )
 
 model = VielleichtguarModel(
