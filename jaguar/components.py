@@ -83,8 +83,7 @@ class EmbeddingModel(nn.Module):
         self.freeze = freeze
         self.use_caching = use_caching
         if freeze:
-            for param in self.model.parameters():
-                param.requires_grad = False
+            self.freeze_weights()
 
     def get_transforms(self, is_training=False) -> transforms.Compose:
         data_config = timm.data.resolve_model_data_config(self.model)
@@ -104,6 +103,14 @@ class EmbeddingModel(nn.Module):
     def _get_cache_path(self, input_hash: int) -> Path:
         cache_file = self.cache_folder / f"{input_hash}.pt"
         return cache_file
+
+    def freeze_weights(self):
+        for param in self.model.parameters():
+            param.requires_grad = False
+
+    def unfreeze_weights(self):
+        for param in self.model.parameters():
+            param.requires_grad = True
 
     def train(self, mode=True):
         super().train(mode)
