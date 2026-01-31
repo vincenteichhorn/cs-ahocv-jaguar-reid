@@ -4,17 +4,16 @@ import torch
 import torch.nn as nn
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import ReduceLROnPlateau
-import torchvision.transforms.v2 as transforms
 from dotenv import load_dotenv
 from pathlib import Path
 import numpy as np
 import wandb
 
-from jaguarv2.components import MegaDescriptor, VielleichtguarModel, EmbeddingProjection
-from jaguarv2.criteria import ArcFaceCriterion
-from jaguarv2.datasets import get_dataloaders
-from jaguarv2.submission import build_submission
-from jaguarv2.train import train_epoch, validate_epoch
+from jaguar.components import MegaDescriptor, VielleichtguarModel, EmbeddingProjection
+from jaguar.criteria import ArcFaceCriterion
+from jaguar.datasets import get_dataloaders
+from jaguar.submission import build_submission
+from jaguar.train import train_epoch, validate_epoch
 
 PROJECT = "jaguar-reid-josefandvincent"
 GROUP = "00_baseline"

@@ -10,11 +10,11 @@ from pathlib import Path
 import numpy as np
 import wandb
 
-from jaguarv2.components import DINOv3, MegaDescriptor, VielleichtguarModel, EmbeddingProjection
-from jaguarv2.criteria import ArcFaceCriterion
-from jaguarv2.datasets import get_dataloaders
-from jaguarv2.submission import build_submission
-from jaguarv2.train import train_epoch, validate_epoch
+from jaguar.components import DINOv3, MegaDescriptor, VielleichtguarModel, EmbeddingProjection
+from jaguar.criteria import ArcFaceCriterion
+from jaguar.datasets import get_dataloaders
+from jaguar.submission import build_submission
+from jaguar.train import train_epoch, validate_epoch
 
 PROJECT = "jaguar-reid-josefandvincent"
 GROUP = "_test"
