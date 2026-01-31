@@ -42,6 +42,3 @@ salloc --partition gpu-interactive --account=sci-demelo-computer-vision --cpus-p
 - EX12: **Optimizers** Adam, SGD, AdamW
 - EX13: **Learning Rate Schedulers** StepLR, CosineAnnealingLR, OneCycleLR
 - EX14: **Basic Hyperparameters** batch size, learning rate, weight decay, momentum
-
-
-

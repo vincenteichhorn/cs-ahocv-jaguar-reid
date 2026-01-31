@@ -77,7 +77,7 @@ class EmbeddingModel(nn.Module):
     def __init__(self, model_name: str, freeze=True, cache_folder="./embeddings", use_caching: bool = True, *args, **kwargs):
         super().__init__()
         self.model = timm.create_model(model_name, *args, **kwargs)
-        self.device = next(self.model.parameters()).device
+        self.device = self._update_device()
         self.cache_folder = Path(cache_folder) / model_name.replace("/", "_")
         self.cache_folder.mkdir(parents=True, exist_ok=True)
         self.freeze = freeze
@@ -97,6 +97,14 @@ class EmbeddingModel(nn.Module):
         img_tensor = transform(img).unsqueeze(0).to(self.device)
         dummy_output = self.model(img_tensor)
         return dummy_output.shape[1]
+
+    def to(self, device):
+        rt = super().to(device)
+        self.device = self._update_device()
+        return rt
+
+    def _update_device(self):
+        return next(self.model.parameters()).device
 
     def _tensor_hash(self, x: torch.Tensor) -> int:
         return torch.hash_tensor(x).item()
