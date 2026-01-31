@@ -6,3 +6,4 @@ __pycache__/
 .env
 .vscode/
 cache/
+gpu_task_internal.py
