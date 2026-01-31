@@ -53,7 +53,7 @@ load_dotenv()
 # os.environ["WANDB_API_KEY"] = user_secrets.get_secret("wandb_token")
 
 wandb.login(key=os.getenv("WANDB_API_KEY"))
-wandb.init(project=PROJECT, config=EXPERIMENT_CONFIG, group=GROUP, name=RUN_NAME)
+wandb.init(project=PROJECT, config={**EXPERIMENT_CONFIG, **BASE_CONFIG}, group=GROUP, name=RUN_NAME)
 
 BASE_CONFIG["checkpoint_dir"].mkdir(exist_ok=True)
 checkpoint_path = BASE_CONFIG["checkpoint_dir"] / f"{RUN_NAME}_best.pth"
@@ -61,6 +61,7 @@ submission_path = BASE_CONFIG["checkpoint_dir"] / f"{RUN_NAME}_submission.csv"
 
 backbone = MegaDescriptor(freeze=not EXPERIMENT_CONFIG["train_backbone"], cache_folder=BASE_CONFIG["embeddings_dir"])
 base_transforms = backbone.get_transforms()
+print(base_transforms)
 
 train_dataloader, validation_dataloader, test_dataloader, num_classes, label_encoder = get_dataloaders(
     data_dir=BASE_CONFIG["data_dir"],

@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Tuple, Union
 import torch
 import torch.nn as nn
 import timm
@@ -14,7 +15,7 @@ class VielleichtguarModel(nn.Module):
         self.layers = layers
         self.criterion = criterion
 
-    def forward(self, x: torch.Tensor, labels: torch.Tensor = None) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, labels: torch.Tensor = None) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         backbone_features = self.backbone(x)
         embeddings = self.layers(backbone_features)
         if labels is not None:
