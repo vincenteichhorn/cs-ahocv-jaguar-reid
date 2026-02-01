@@ -1,5 +1,6 @@
 import os
 import time
+import pandas as pd
 import torch
 import torch.nn as nn
 from torch.optim import AdamW
@@ -7,16 +8,18 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 from dotenv import load_dotenv
 from pathlib import Path
 import numpy as np
+from tqdm import tqdm
 import wandb
+import torch.nn.functional as F
 
-from jaguar.components import DINOv3, MegaDescriptor, VielleichtguarModel, EmbeddingProjection
+from jaguar.components import DINOv3, VielleichtguarModel, EmbeddingProjection
 from jaguar.criteria import ArcFaceCriterion
 from jaguar.datasets import get_dataloaders
 from jaguar.submission import build_submission
 from jaguar.train import train_epoch, validate_epoch
 
 PROJECT = "jaguar-reid-josefandvincent"
-GROUP = "13_optimizer"
+GROUP = "10_QE_RR"
 RUN_NAME = f"{GROUP}-dinov3-projection-arcface"
 
 BASE_CONFIG = {
@@ -29,36 +32,6 @@ BASE_CONFIG = {
 }
 
 EXPERIMENT_CONFIGS = [
-    # {
-    #     "epochs": 100,
-    #     "batch_size": 64,
-    #     "image_size": 256,
-    #     "hidden_dim": 512,
-    #     "output_dim": 256,
-    #     "dropout": 0.3,
-    #     "weight_decay": 1e-4,
-    #     "learning_rate": 5e-4,
-    #     "arcface_margin": 0.5,
-    #     "arcface_scale": 64.0,
-    #     "patience": 10,
-    #     "train_backbone": False,
-    #     "optimizer": "Adam",
-    # },
-    # {
-    #     "epochs": 100,
-    #     "batch_size": 64,
-    #     "image_size": 256,
-    #     "hidden_dim": 512,
-    #     "output_dim": 256,
-    #     "dropout": 0.3,
-    #     "weight_decay": 1e-4,
-    #     "learning_rate": 5e-4,
-    #     "arcface_margin": 0.5,
-    #     "arcface_scale": 64.0,
-    #     "patience": 10,
-    #     "train_backbone": False,
-    #     "optimizer": "AdamW",
-    # },
     {
         "epochs": 100,
         "batch_size": 64,
@@ -67,12 +40,13 @@ EXPERIMENT_CONFIGS = [
         "output_dim": 256,
         "dropout": 0.3,
         "weight_decay": 1e-4,
-        "learning_rate": 1e-3,
+        "learning_rate": 5e-4,
         "arcface_margin": 0.5,
         "arcface_scale": 64.0,
         "patience": 10,
         "train_backbone": False,
-        "optimizer": "SGD",
+        "QE_enabled": False,
+        "RR_enabled": False,
     },
     {
         "epochs": 100,
@@ -82,12 +56,45 @@ EXPERIMENT_CONFIGS = [
         "output_dim": 256,
         "dropout": 0.3,
         "weight_decay": 1e-4,
-        "learning_rate": 1e-3,
+        "learning_rate": 5e-4,
         "arcface_margin": 0.5,
         "arcface_scale": 64.0,
         "patience": 10,
         "train_backbone": False,
-        "optimizer": "SGD_Nesterov",
+        "QE_enabled": True,
+        "RR_enabled": True,
+    },
+    {
+        "epochs": 100,
+        "batch_size": 64,
+        "image_size": 256,
+        "hidden_dim": 512,
+        "output_dim": 256,
+        "dropout": 0.3,
+        "weight_decay": 1e-4,
+        "learning_rate": 5e-4,
+        "arcface_margin": 0.5,
+        "arcface_scale": 64.0,
+        "patience": 10,
+        "train_backbone": False,
+        "QE_enabled": False,
+        "RR_enabled": True,
+    },
+    {
+        "epochs": 100,
+        "batch_size": 64,
+        "image_size": 256,
+        "hidden_dim": 512,
+        "output_dim": 256,
+        "dropout": 0.3,
+        "weight_decay": 1e-4,
+        "learning_rate": 5e-4,
+        "arcface_margin": 0.5,
+        "arcface_scale": 64.0,
+        "patience": 10,
+        "train_backbone": False,
+        "QE_enabled": True,
+        "RR_enabled": False,
     },
 ]
 
@@ -103,7 +110,7 @@ for EXPERIMENT_CONFIG in EXPERIMENT_CONFIGS:
 
     BASE_CONFIG["checkpoint_dir"].mkdir(exist_ok=True)
     checkpoint_path = BASE_CONFIG["checkpoint_dir"] / f"{RUN_NAME}_best.pth"
-    submission_path = BASE_CONFIG["checkpoint_dir"] / f"{RUN_NAME}_submission.csv"
+    submission_path = BASE_CONFIG["checkpoint_dir"] / f"{RUN_NAME}_{EXPERIMENT_CONFIG['QE_enabled']}_{EXPERIMENT_CONFIG['RR_enabled']}_submission.csv"
 
     backbone = DINOv3(freeze=not EXPERIMENT_CONFIG["train_backbone"], cache_folder=BASE_CONFIG["embeddings_dir"])
     base_transforms = backbone.get_transforms()
@@ -142,33 +149,7 @@ for EXPERIMENT_CONFIG in EXPERIMENT_CONFIGS:
         {"trainable_parameters": sum(p.numel() for p in model.parameters() if p.requires_grad), "total_parameters": sum(p.numel() for p in model.parameters())}
     )
 
-    if EXPERIMENT_CONFIG["optimizer"] == "Adam":
-        optimizer = torch.optim.Adam(
-            filter(lambda p: p.requires_grad, model.parameters()),
-            lr=EXPERIMENT_CONFIG["learning_rate"],
-            weight_decay=EXPERIMENT_CONFIG["weight_decay"],
-        )
-    elif EXPERIMENT_CONFIG["optimizer"] == "AdamW":
-        optimizer = torch.optim.AdamW(
-            filter(lambda p: p.requires_grad, model.parameters()),
-            lr=EXPERIMENT_CONFIG["learning_rate"],
-            weight_decay=EXPERIMENT_CONFIG["weight_decay"],
-        )
-    elif EXPERIMENT_CONFIG["optimizer"] == "SGD":
-        optimizer = torch.optim.SGD(
-            filter(lambda p: p.requires_grad, model.parameters()),
-            lr=EXPERIMENT_CONFIG["learning_rate"],
-            weight_decay=EXPERIMENT_CONFIG["weight_decay"],
-            momentum=0.9,
-        )
-    elif EXPERIMENT_CONFIG["optimizer"] == "SGD_Nesterov":
-        optimizer = torch.optim.SGD(
-            filter(lambda p: p.requires_grad, model.parameters()),
-            lr=EXPERIMENT_CONFIG["learning_rate"],
-            weight_decay=EXPERIMENT_CONFIG["weight_decay"],
-            momentum=0.9,
-            nesterov=True,
-        )
+    optimizer = AdamW(model.parameters(), lr=EXPERIMENT_CONFIG["learning_rate"], weight_decay=EXPERIMENT_CONFIG["weight_decay"])
     lr_scheduler = ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=5)
 
     best_epoch, best_map, patience_counter, total_duration, eta = 0, 0.0, 0, 0.0, 0.0
@@ -181,6 +162,7 @@ for EXPERIMENT_CONFIG in EXPERIMENT_CONFIGS:
         epoch_time = end - start
         total_duration += epoch_time
         eta = (epoch_time if epoch == 0 else 0.9 * (eta / (EXPERIMENT_CONFIG["epochs"] - epoch)) + 0.1 * epoch_time) * (EXPERIMENT_CONFIG["epochs"] - epoch - 1)
+
         lr_scheduler.step(validation_loss)
 
         print(
@@ -218,8 +200,17 @@ for EXPERIMENT_CONFIG in EXPERIMENT_CONFIGS:
         if patience_counter >= EXPERIMENT_CONFIG["patience"]:
             break
 
+        model.eval()
+
     model.load_model(checkpoint_path)
-    build_submission(submission_path, model, test_dataloader, device)
+    build_submission(
+        submission_path,
+        model,
+        test_dataloader,
+        device,
+        query_expansion_enabled=EXPERIMENT_CONFIG["QE_enabled"],
+        k_reciprocal_reranking_enabled=EXPERIMENT_CONFIG["RR_enabled"],
+    )
 
     wandb.run.summary["best_val_mAP"] = best_map
     wandb.run.summary["best_epoch"] = best_epoch

@@ -30,18 +30,17 @@ salloc --partition gpu-interactive --account=sci-demelo-computer-vision --cpus-p
 - EX06: **Model Architectures** Projection Head variations, Dropout variations
 
 ## C3 Model Combinations
-- EX07 **Fine-tuning** the embedding model and not the projection head
+- EX07 **Fine-tuning** the embedding model and not the projection head (Exp: Done, Report: Pending)
 
 ## C4 Data and Training Strategies
 - EX08: **Sampling Strategies** Random, Class-Balanced, Hard Negative Mining, P-K Sampling
 - EX09: **Data Augmentation** geometric, color, cutour, mixup, cutmix
-- EX10: **Cross Validation** k-fold cross-validation, stratified k-fold cross-validation, leave-one-out cross-validation
+- ~~EX10: **Cross Validation** k-fold cross-validation, stratified k-fold cross-validation, leave-one-out cross-validation~~
+- EX10: **Query Expansion (QE) and Re-Ranking (RR)**
 - EX11: **Test Time Augmentation (TTA)**
 
 ## C5 Hyperparameter Optimization
-- EX12: **Optimizers** Adam, SGD, AdamW
-- EX13: **Learning Rate Schedulers** StepLR, CosineAnnealingLR, OneCycleLR
+- EX12: **Optimizers** Adam, SGD, AdamW (Exp: Done, Report: Pending)
+- EX13: **Learning Rate Schedulers** ReduceLROnPlateau, StepLR, CosineAnnealingLR, OneCycleLR (Exp: Done, Report: Pending)
 - EX14: **Basic Hyperparameters** batch size, learning rate, weight decay, momentum
-
-
 
