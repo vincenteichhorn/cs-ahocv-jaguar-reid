@@ -99,7 +99,6 @@ class CosFaceLayer(nn.Module):
         self.margin = margin
         self.scale = scale
 
-        # Weight matrix: (num_classes, embedding_dim)
         self.weight = nn.Parameter(torch.FloatTensor(num_classes, embedding_dim))
         nn.init.xavier_uniform_(self.weight)
 
@@ -130,15 +129,39 @@ class CosFaceCriterion(nn.Module):
         return loss
 
 
-class ArcFaceTripletCriterion(nn.Module):
-    def __init__(self, embedding_dim, num_classes, arcface_margin, arcface_scale, triplet_margin, beta=0.5):
+class FocalLoss(nn.Module):
+    def __init__(self, gamma=2.0, reduction="mean"):
+        super(FocalLoss, self).__init__()
+        self.gamma = gamma
+        self.reduction = reduction
+
+    def forward(self, logits, labels):
+        # Calculate log probabilities
+        log_p = F.log_softmax(logits, dim=1)
+        p = torch.exp(log_p)
+
+        # Gather the log probabilities of the target classes
+        log_p_t = log_p.gather(1, labels.view(-1, 1))
+        p_t = p.gather(1, labels.view(-1, 1))
+
+        # Focal Loss formula
+        loss = -((1 - p_t) ** self.gamma) * log_p_t
+
+        if self.reduction == "mean":
+            return loss.mean()
+        elif self.reduction == "sum":
+            return loss.sum()
+        else:
+            return loss
+
+
+class FocalArcFaceCriterion(nn.Module):
+    def __init__(self, embedding_dim, num_classes, margin, scale, gamma=2.0):
         super().__init__()
-        self.beta = beta
-        self.arcface_criterion = ArcFaceCriterion(embedding_dim, num_classes, arcface_margin, arcface_scale)
-        self.triplet_criterion = TripletCriterion(triplet_margin)
+        self.arcface = ArcFaceLayer(embedding_dim=embedding_dim, num_classes=num_classes, margin=margin, scale=scale)
+        self.focal_loss = FocalLoss(gamma=gamma)
 
     def forward(self, embeddings, labels):
-        arcface_loss = self.arcface_criterion(embeddings, labels)
-        triplet_loss = self.triplet_criterion(embeddings, labels)
-        total_loss = arcface_loss * self.beta + triplet_loss * (1.0 - self.beta)
-        return total_loss
+        logits = self.arcface(embeddings, labels)
+        loss = self.focal_loss(logits, labels)
+        return loss

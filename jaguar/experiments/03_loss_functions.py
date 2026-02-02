@@ -3,20 +3,21 @@ import time
 import torch
 import torch.nn as nn
 from torch.optim import AdamW
+from torchvision.transforms import v2
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from dotenv import load_dotenv
 from pathlib import Path
 import numpy as np
 import wandb
 
-from jaguar.components import EVA02, DINOv3, EfficientNetB4, MegaDescriptor, MobileNetV3, VielleichtguarModel, EmbeddingProjection
-from jaguar.criteria import ArcFaceCriterion
+from jaguar.components import DINOv3, VielleichtguarModel, EmbeddingProjection
+from jaguar.criteria import ArcFaceCriterion, CosFaceCriterion, FocalArcFaceCriterion, SubCenterArcFaceCriterion, TripletCriterion
 from jaguar.datasets import get_dataloaders
 from jaguar.submission import build_submission
 from jaguar.train import train_epoch, validate_epoch
 
 PROJECT = "jaguar-reid-josefandvincent"
-GROUP = "02_backbone"
+GROUP = "03_loss_functions"
 
 BASE_CONFIG = {
     "random_seed": 42,
@@ -27,37 +28,28 @@ BASE_CONFIG = {
     "validation_split_size": 0.2,
 }
 
-for backbone, image_size in [
-    (DINOv3(freeze=True, cache_folder=BASE_CONFIG["embeddings_dir"]), 256),
-    (MegaDescriptor(freeze=True, cache_folder=BASE_CONFIG["embeddings_dir"]), 384),
-    (EfficientNetB4(freeze=True, cache_folder=BASE_CONFIG["embeddings_dir"]), 380),
-    (MobileNetV3(freeze=True, cache_folder=BASE_CONFIG["embeddings_dir"]), 224),
-    (EVA02(freeze=True, cache_folder=BASE_CONFIG["embeddings_dir"]), 448),
-]:
-    RUN_NAME = f"{GROUP}-{backbone.__class__.__name__.lower()}"
+for criterion_name in ["Triplet", "ArcFace", "SubCenterArcFace", "FocalArcFaceCriterion", "CosFace"]:
 
     EXPERIMENT_CONFIG = {
         "epochs": 100,
-        "batch_size": 64,
-        "image_size": image_size,
+        "batch_size": 32,
+        "image_size": 256,
         "hidden_dim": 512,
         "output_dim": 256,
         "dropout": 0.3,
         "weight_decay": 1e-4,
         "learning_rate": 5e-4,
-        "arcface_margin": 0.5,
-        "arcface_scale": 64.0,
         "patience": 10,
-        "backbone_name": backbone.__class__.__name__,
     }
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    RUN_NAME = f"{GROUP}_{criterion_name.lower()}"
+
     torch.manual_seed(BASE_CONFIG["random_seed"])
     np.random.seed(BASE_CONFIG["random_seed"])
 
     load_dotenv()
     # user_secrets = UserSecretsClient()
-    # os.environ["HF_TOKEN"]= user_secrets.get_secret("hf_token")EfficientNetB4
+    # os.environ["HF_TOKEN"]= user_secrets.get_secret("hf_token")
     # os.environ["WANDB_API_KEY"] = user_secrets.get_secret("wandb_token")
 
     wandb.login(key=os.getenv("WANDB_API_KEY"))
@@ -67,8 +59,9 @@ for backbone, image_size in [
     checkpoint_path = BASE_CONFIG["checkpoint_dir"] / f"{RUN_NAME}_best.pth"
     submission_path = BASE_CONFIG["checkpoint_dir"] / f"{RUN_NAME}_submission.csv"
 
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    backbone = DINOv3(freeze=True, cache_folder=BASE_CONFIG["embeddings_dir"], use_caching=True)
     base_transforms = backbone.get_transforms()
-    print(base_transforms)
 
     train_dataloader, validation_dataloader, test_dataloader, num_classes, label_encoder = get_dataloaders(
         data_dir=BASE_CONFIG["data_dir"],
@@ -82,6 +75,57 @@ for backbone, image_size in [
         mode="background",
     )
 
+    critera_config = {
+        "Triplet": {"triplet_margin": 0.3},
+        "ArcFace": {"arcface_embedding_dim": EXPERIMENT_CONFIG["output_dim"], "num_classes": num_classes, "arcface_margin": 0.5, "arcface_scale": 64.0},
+        "SubCenterArcFace": {
+            "subc_arcface_embedding_dim": EXPERIMENT_CONFIG["output_dim"],
+            "num_classes": num_classes,
+            "subc_arcface_num_subcenters": 3,
+            "subc_arcface_margin": 0.5,
+            "subc_arcface_scale": 64.0,
+        },
+        "FocalArcFaceCriterion": {
+            "focal_arcface_embedding_dim": EXPERIMENT_CONFIG["output_dim"],
+            "num_classes": num_classes,
+            "focal_arcface_margin": 0.5,
+            "focal_arcface_scale": 64.0,
+            "focal_gamma": 2.0,
+        },
+        "CosFace": {"cosface_embedding_dim": EXPERIMENT_CONFIG["output_dim"], "num_classes": num_classes, "cosface_margin": 0.35, "cosface_scale": 64.0},
+    }
+    EXPERIMENT_CONFIG = {**EXPERIMENT_CONFIG, **critera_config[criterion_name]}
+
+    criteria = {
+        "Triplet": lambda: TripletCriterion(margin=EXPERIMENT_CONFIG["triplet_margin"]),
+        "ArcFace": lambda: ArcFaceCriterion(
+            embedding_dim=EXPERIMENT_CONFIG["arcface_embedding_dim"],
+            num_classes=EXPERIMENT_CONFIG["num_classes"],
+            margin=EXPERIMENT_CONFIG["arcface_margin"],
+            scale=EXPERIMENT_CONFIG["arcface_scale"],
+        ),
+        "SubCenterArcFace": lambda: SubCenterArcFaceCriterion(
+            embedding_dim=EXPERIMENT_CONFIG["subc_arcface_embedding_dim"],
+            num_classes=EXPERIMENT_CONFIG["num_classes"],
+            num_subcenters=EXPERIMENT_CONFIG["subc_arcface_num_subcenters"],
+            margin=EXPERIMENT_CONFIG["subc_arcface_margin"],
+            scale=EXPERIMENT_CONFIG["subc_arcface_scale"],
+        ),
+        "FocalArcFaceCriterion": lambda: FocalArcFaceCriterion(
+            embedding_dim=EXPERIMENT_CONFIG["focal_arcface_embedding_dim"],
+            num_classes=EXPERIMENT_CONFIG["num_classes"],
+            margin=EXPERIMENT_CONFIG["focal_arcface_margin"],
+            scale=EXPERIMENT_CONFIG["focal_arcface_scale"],
+            gamma=EXPERIMENT_CONFIG["focal_gamma"],
+        ),
+        "CosFace": lambda: CosFaceCriterion(
+            embedding_dim=EXPERIMENT_CONFIG["cosface_embedding_dim"],
+            num_classes=EXPERIMENT_CONFIG["num_classes"],
+            margin=EXPERIMENT_CONFIG["cosface_margin"],
+            scale=EXPERIMENT_CONFIG["cosface_scale"],
+        ),
+    }
+
     model = VielleichtguarModel(
         backbone=backbone,
         layers=nn.Sequential(
@@ -92,12 +136,7 @@ for backbone, image_size in [
                 dropout=EXPERIMENT_CONFIG["dropout"],
             ),
         ),
-        criterion=ArcFaceCriterion(
-            embedding_dim=EXPERIMENT_CONFIG["output_dim"],
-            num_classes=num_classes,
-            margin=EXPERIMENT_CONFIG["arcface_margin"],
-            scale=EXPERIMENT_CONFIG["arcface_scale"],
-        ),
+        criterion=criteria[criterion_name](),
     ).to(device)
 
     wandb.log(
@@ -125,7 +164,8 @@ for backbone, image_size in [
             f"val/loss: {validation_loss:>8.4f} | ",
             f"val/mAP: {validation_map:>7.4f} | ",
             f"lr: {optimizer.param_groups[0]['lr']:>7.1e} | ",
-            f"eta: {max(0,eta)/60:.1f} min" if max(0, eta) > 60 else f"eta: {max(0,eta):.1f} sec",
+            f"eta: {max(0,eta)/60:.1f} min | " if max(0, eta) > 60 else f"eta: {max(0,eta):.1f} sec | ",
+            f"patience: {patience_counter}/{EXPERIMENT_CONFIG['patience']}",
             sep="",
         )
 

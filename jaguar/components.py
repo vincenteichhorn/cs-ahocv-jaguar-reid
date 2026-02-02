@@ -44,17 +44,28 @@ class VielleichtguarModel(nn.Module):
 
 class EmbeddingProjection(nn.Module):
 
-    def __init__(self, input_dim=1536, hidden_dim=512, output_dim=256, dropout=0.3):
+    def __init__(self, input_dim=1536, hidden_dim=512, output_dim=256, dropout=0.3, n_layers=2):
         super().__init__()
 
-        self.embedding_projection = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
-            nn.BatchNorm1d(hidden_dim),
-            nn.ReLU(inplace=True),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim, output_dim),
-            nn.BatchNorm1d(output_dim),
+        modules = []
+        if n_layers >= 2:
+            for i in range(n_layers - 1):
+                modules.extend(
+                    [
+                        nn.Linear(input_dim if i == 0 else hidden_dim, hidden_dim),
+                        nn.BatchNorm1d(hidden_dim),
+                        nn.ReLU(inplace=True),
+                        nn.Dropout(dropout),
+                    ]
+                )
+        modules.extend(
+            [
+                nn.Linear(hidden_dim if n_layers >= 2 else input_dim, output_dim),
+                nn.BatchNorm1d(output_dim),
+            ]
         )
+
+        self.embedding_projection = nn.Sequential(*modules)
 
         self._init_weights()
 
@@ -78,7 +89,7 @@ class EmbeddingModel(nn.Module):
         super().__init__()
         self.model = timm.create_model(model_name, *args, **kwargs)
         self.device = self._update_device()
-        self.cache_folder = Path(cache_folder) / model_name.replace("/", "_")
+        self.cache_folder = Path(cache_folder) / f"{model_name.replace('/', '_')}_{self.__class__.__name__.lower()}"
         self.cache_folder.mkdir(parents=True, exist_ok=True)
         self.freeze = freeze
         self.use_caching = use_caching
@@ -92,10 +103,11 @@ class EmbeddingModel(nn.Module):
         return transforms
 
     def out_dim(self) -> int:
+        self._update_device()
         img = Image.new("RGB", (512, 512), (0, 0, 0))
         transform = self.get_transforms()
         img_tensor = transform(img).unsqueeze(0).to(self.device)
-        dummy_output = self.model(img_tensor)
+        dummy_output = self.forward(img_tensor)
         return dummy_output.shape[1]
 
     def to(self, device):
@@ -199,6 +211,12 @@ class MobileNetV3(EmbeddingModel):
         super().__init__("mobilenetv3_large_100", pretrained=True, *args, **kwargs)
 
 
+class EVA02(EmbeddingModel):
+
+    def __init__(self, *args, **kwargs):
+        super().__init__("timm/eva02_large_patch14_448.mim_m38m_ft_in22k_in1k", pretrained=True, *args, **kwargs)
+
+
 class GeMPooling(nn.Module):
 
     def __init__(self, p=3.0, eps=1e-6):
@@ -207,10 +225,11 @@ class GeMPooling(nn.Module):
         self.eps = eps
 
     def forward(self, x):
-        return F.avg_pool2d(x.clamp(min=self.eps).pow(self.p), (x.size(-2), x.size(-1))).pow(1.0 / self.p).squeeze(-1).squeeze(-1)
+        out = F.avg_pool2d(x.clamp(min=self.eps).pow(self.p), (x.size(-2), x.size(-1))).pow(1.0 / self.p).squeeze(-1).squeeze(-1)
+        return out
 
 
-class DINOV3FM(EmbeddingModel):
+class DINOv3FM(EmbeddingModel):
 
     def __init__(self, *args, **kwargs):
         super().__init__("vit_large_patch16_dinov3.lvd1689m", pretrained=True, num_classes=0, global_pool="", *args, **kwargs)

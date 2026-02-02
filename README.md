@@ -21,13 +21,21 @@ salloc --partition gpu-interactive --account=sci-demelo-computer-vision --cpus-p
 
 ## C1 Domain Understanding
 - EX01: **Explanatory Dataset Analysis** class distribution, image quality, intra-class variability, inter-class similarity
+  - Identity Distribution Plot
+  - Viewpoint Classification?
+  - Segmentation Quality Audit
+  - Intra-class Variability Analysis
+  - Inter-class Similarity Analysis
+  - Near Duplicate Detection
+  - Embedding Space Exploration
+  - Saliency Map Visualization / Grad-CAM
 
 ## C2 Model Architecture
 - EX02: **Embedding Model** MegaDescriptor, DINOv3, EfficientNet, MobileNet v3
 - EX03: **Loss Functions** ArcFace, SubCenter ArcFace, CosFace, Triplet Loss, Focal Loss
-- EX04: **Combined Losses** ArcFace + Triplet, CosFace + Triplet
-- EX05: **Class Balanced Loss**
-- EX06: **Model Architectures** Projection Head variations, Dropout variations
+- EX04: **Class Balanced Loss**
+- EX05: **Model Architectures** GeM Pooling + BatchNorm1d + Projection Head
+- EX06: **Projection Head Variations** different deep, different widths
 
 ## C3 Model Combinations
 - EX07 **Fine-tuning** the embedding model and not the projection head
