@@ -9,15 +9,15 @@ from pathlib import Path
 import numpy as np
 import wandb
 
-from jaguar.components import MegaDescriptor, VielleichtguarModel, EmbeddingProjection
+from jaguar.components import DINOv3, VielleichtguarModel, EmbeddingProjection
 from jaguar.criteria import ArcFaceCriterion
 from jaguar.datasets import get_dataloaders
 from jaguar.submission import build_submission
 from jaguar.train import train_epoch, validate_epoch
 
 PROJECT = "jaguar-reid-josefandvincent"
-GROUP = "00_baseline"
-RUN_NAME = f"{GROUP}-megadescriptor-projection-arcface"
+GROUP = "07_Backbone_FT"
+RUN_NAME = f"{GROUP}-dinov3-projection-arcface"
 
 BASE_CONFIG = {
     "random_seed": 42,
@@ -30,8 +30,8 @@ BASE_CONFIG = {
 
 EXPERIMENT_CONFIG = {
     "epochs": 100,
-    "batch_size": 64,
-    "image_size": 384,
+    "batch_size": 32,
+    "image_size": 256,  # MegaDescriptor uses 384, DINOv3 uses 256
     "hidden_dim": 512,
     "output_dim": 256,
     "dropout": 0.3,
@@ -40,7 +40,8 @@ EXPERIMENT_CONFIG = {
     "arcface_margin": 0.5,
     "arcface_scale": 64.0,
     "patience": 10,
-    "train_backbone": False,
+    "data_mode": "segmented",
+    "train_backbone_for_epochs": 20,
 }
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -48,9 +49,6 @@ torch.manual_seed(BASE_CONFIG["random_seed"])
 np.random.seed(BASE_CONFIG["random_seed"])
 
 load_dotenv()
-# user_secrets = UserSecretsClient()
-# os.environ["HF_TOKEN"]= user_secrets.get_secret("hf_token")
-# os.environ["WANDB_API_KEY"] = user_secrets.get_secret("wandb_token")
 
 wandb.login(key=os.getenv("WANDB_API_KEY"))
 wandb.init(project=PROJECT, config={**EXPERIMENT_CONFIG, **BASE_CONFIG}, group=GROUP, name=RUN_NAME)
@@ -59,7 +57,7 @@ BASE_CONFIG["checkpoint_dir"].mkdir(exist_ok=True)
 checkpoint_path = BASE_CONFIG["checkpoint_dir"] / f"{RUN_NAME}_best.pth"
 submission_path = BASE_CONFIG["checkpoint_dir"] / f"{RUN_NAME}_submission.csv"
 
-backbone = MegaDescriptor(freeze=not EXPERIMENT_CONFIG["train_backbone"], cache_folder=BASE_CONFIG["embeddings_dir"])
+backbone = DINOv3(freeze=EXPERIMENT_CONFIG["train_backbone_for_epochs"] == 0, cache_folder=BASE_CONFIG["embeddings_dir"])
 base_transforms = backbone.get_transforms()
 
 train_dataloader, validation_dataloader, test_dataloader, num_classes, label_encoder = get_dataloaders(
@@ -71,7 +69,7 @@ train_dataloader, validation_dataloader, test_dataloader, num_classes, label_enc
     cache_dir=BASE_CONFIG["cache_dir"],
     train_process_fn=base_transforms,
     val_process_fn=base_transforms,
-    mode="background",
+    mode=EXPERIMENT_CONFIG["data_mode"],
 )
 
 model = VielleichtguarModel(
@@ -113,6 +111,10 @@ for epoch in range(EXPERIMENT_CONFIG["epochs"]):
     eta = (epoch_time if epoch == 0 else 0.9 * (eta / (EXPERIMENT_CONFIG["epochs"] - epoch)) + 0.1 * epoch_time) * (EXPERIMENT_CONFIG["epochs"] - epoch - 1)
     lr_scheduler.step(validation_loss)
 
+    if epoch + 1 == EXPERIMENT_CONFIG["train_backbone_for_epochs"]:
+        backbone.freeze_weights()
+        print(f"Freezing backbone at epoch {epoch+1}")
+
     print(
         f"epoch: {epoch+1:>2}/{EXPERIMENT_CONFIG['epochs']} | ",
         f"train/loss: {train_loss:>8.4f} | ",
@@ -139,7 +141,7 @@ for epoch in range(EXPERIMENT_CONFIG["epochs"]):
         patience_counter = 0
         model.save_model(
             checkpoint_path,
-            with_backbone=EXPERIMENT_CONFIG["train_backbone"],
+            with_backbone=EXPERIMENT_CONFIG["train_backbone_for_epochs"] != 0,
             with_criterion=False,
         )
     else:

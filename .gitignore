@@ -8,3 +8,5 @@ __pycache__/
 cache/
 gpu_task_internal.py
 _jobs/
+cluster_runs/
+jaguar/experiments/cluster_start.sh

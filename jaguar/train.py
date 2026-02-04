@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from tqdm import tqdm
 
 
-def train_epoch(model, data_loader, optimizer, device) -> float:
+def train_epoch(model, data_loader, optimizer, device, lr_scheduler=None) -> float:
     """
     Train the model for one epoch.
 
@@ -14,6 +14,7 @@ def train_epoch(model, data_loader, optimizer, device) -> float:
         data_loader: DataLoader providing the training data.
         optimizer: The optimizer to use for training.
         device: The device to run the training on.
+        lr_scheduler: Optional learning rate scheduler to update after each batch.
     Returns:
         avg_loss (float): The average loss over the epoch.
     """
@@ -28,6 +29,8 @@ def train_epoch(model, data_loader, optimizer, device) -> float:
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+        if lr_scheduler is not None:
+            lr_scheduler.step()
 
         total_loss += loss.item()
 
