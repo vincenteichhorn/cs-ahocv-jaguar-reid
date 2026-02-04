@@ -1,13 +1,14 @@
 import gc
 from pathlib import Path
 from typing import Callable, Dict, Literal, Tuple
+import numpy as np
 import pandas as pd
 from sklearn.calibration import LabelEncoder
 from sklearn.model_selection import train_test_split
 import torch
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, UnidentifiedImageError, ImageFilter
 from tqdm import tqdm
 
 
@@ -118,7 +119,7 @@ class ImageDataset(Dataset):
         label_column: str = "label_encoded",
         image_size: int = 384,
         process_fn: Callable = None,
-        mode: Literal["segmented", "background"] = "segmented",
+        mode: Literal["segmented", "background", "blurred", "noisy", "random"] = "segmented",
         cache_dir: str = "./cache",
         key: str = "train",
         prewarm: bool = True,
@@ -176,6 +177,31 @@ class ImageDataset(Dataset):
             black_bg = Image.new("RGB", img.size, (0, 0, 0))
             black_bg.paste(img, mask=img.split()[3])  # 3 is the alpha channel
             processed_img = self.resize_transform(black_bg)
+        elif self.mode == "blurred":
+            img = Image.open(image_path).convert("RGBA")
+            r, g, b, a = img.split()
+            blurred_img = img.copy().filter(ImageFilter.GaussianBlur(radius=15))
+            final_img = Image.composite(img, blurred_img, a)
+            processed_img = self.resize_transform(final_img.convert("RGB"))
+        elif self.mode == "noisy":
+            img = Image.open(image_path).convert("RGBA")
+            r, g, b, a = img.split()
+            img_np = np.array(img)
+            noise = np.random.normal(0, 25, img_np.shape).astype(np.uint8)
+            noisy_img_np = np.clip(img_np + noise, 0, 255).astype(np.uint8)
+            noisy_img = Image.fromarray(noisy_img_np)
+            final_img = Image.composite(img, noisy_img, a)
+            processed_img = self.resize_transform(final_img.convert("RGB"))
+        elif self.mode == "random":
+            img = Image.open(image_path).convert("RGBA")
+            r, g, b, a = img.split()
+            img_np = np.array(img)
+            random_pixels = np.random.randint(0, 256, img_np.shape).astype(np.uint8)
+            random_img_np = img_np.copy()
+            random_img_np[a.numpy() == 0] = random_pixels[a.numpy() == 0]
+            random_img = Image.fromarray(random_img_np)
+            final_img = Image.composite(img, random_img, a)
+            processed_img = self.resize_transform(final_img.convert("RGB"))
         else:
             img = Image.open(image_path).convert("RGB")
             img = self.resize_transform(img)
