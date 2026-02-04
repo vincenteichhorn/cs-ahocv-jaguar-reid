@@ -7,3 +7,5 @@ __pycache__/
 .vscode/
 cache/
 gpu_task_internal.py
+cluster_runs/
+jaguar/experiments/cluster_start.sh

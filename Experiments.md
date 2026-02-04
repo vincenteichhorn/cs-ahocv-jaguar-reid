@@ -11,7 +11,7 @@ A valid experiment answers one clear research question using a systematic, contr
 Question: Which Background intervention reduces context reliance without harming identity cues?
 
 Interventions:
-- Gray
+- Gray/Black
 - Blur
 - Noise
 - Random
@@ -135,7 +135,7 @@ Document:
 - Mean and standard deviation across seeds for top contenders
 - Interpretation: Why best choice fits this task (regularization, noisy gradients, batch size effects)
 
-### 9. Compare different schedulers
+### 10. Compare different schedulers
 Question: Which scheduler yields the best identity-balanced mAP?
 
 Requirements:
