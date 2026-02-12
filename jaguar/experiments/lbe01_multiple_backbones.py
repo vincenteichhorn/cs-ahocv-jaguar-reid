@@ -3,21 +3,20 @@ import time
 import torch
 import torch.nn as nn
 from torch.optim import AdamW
-from torchvision.transforms import v2
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from dotenv import load_dotenv
 from pathlib import Path
 import numpy as np
 import wandb
 
-from jaguar.components import DINOv3, VielleichtguarModel, EmbeddingProjection
+from jaguar.components import EVA02, DINOv3, EfficientNetB4, MegaDescriptor, MobileNetV3, VielleichtguarModel, EmbeddingProjection
 from jaguar.criteria import ArcFaceCriterion
 from jaguar.datasets import get_dataloaders
 from jaguar.submission import build_submission
 from jaguar.train import train_epoch, validate_epoch
 
 PROJECT = "jaguar-reid-josefandvincent"
-GROUP = "09c_background_interventions"
+GROUP = "lbe01_multiple_backbones"
 
 BASE_CONFIG = {
     "random_seed": 42,
@@ -28,11 +27,19 @@ BASE_CONFIG = {
     "validation_split_size": 0.2,
 }
 
-for mode in ["segmented", "background", "blurred", "noisy", "random"]:
+for backbone, image_size in [
+    (DINOv3(freeze=True, cache_folder=BASE_CONFIG["embeddings_dir"]), 256),
+    (MegaDescriptor(freeze=True, cache_folder=BASE_CONFIG["embeddings_dir"]), 384),
+    (EfficientNetB4(freeze=True, cache_folder=BASE_CONFIG["embeddings_dir"]), 380),
+    (MobileNetV3(freeze=True, cache_folder=BASE_CONFIG["embeddings_dir"]), 224),
+    (EVA02(freeze=True, cache_folder=BASE_CONFIG["embeddings_dir"]), 448),
+]:
+    RUN_NAME = f"{GROUP}-{backbone.__class__.__name__.lower()}"
+
     EXPERIMENT_CONFIG = {
         "epochs": 100,
-        "batch_size": 32,
-        "image_size": 256,
+        "batch_size": 64,
+        "image_size": image_size,
         "hidden_dim": 512,
         "output_dim": 256,
         "dropout": 0.3,
@@ -41,17 +48,16 @@ for mode in ["segmented", "background", "blurred", "noisy", "random"]:
         "arcface_margin": 0.5,
         "arcface_scale": 64.0,
         "patience": 10,
-        "intervention_mode": mode,
+        "backbone_name": backbone.__class__.__name__,
     }
 
-    RUN_NAME = f"{GROUP}_{mode}"
-
+    device = "cuda" if torch.cuda.is_available() else "cpu"
     torch.manual_seed(BASE_CONFIG["random_seed"])
     np.random.seed(BASE_CONFIG["random_seed"])
 
     load_dotenv()
     # user_secrets = UserSecretsClient()
-    # os.environ["HF_TOKEN"]= user_secrets.get_secret("hf_token")
+    # os.environ["HF_TOKEN"]= user_secrets.get_secret("hf_token")EfficientNetB4
     # os.environ["WANDB_API_KEY"] = user_secrets.get_secret("wandb_token")
 
     wandb.login(key=os.getenv("WANDB_API_KEY"))
@@ -61,9 +67,8 @@ for mode in ["segmented", "background", "blurred", "noisy", "random"]:
     checkpoint_path = BASE_CONFIG["checkpoint_dir"] / f"{RUN_NAME}_best.pth"
     submission_path = BASE_CONFIG["checkpoint_dir"] / f"{RUN_NAME}_submission.csv"
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    backbone = DINOv3(freeze=False, cache_folder=BASE_CONFIG["embeddings_dir"], use_caching=False)
     base_transforms = backbone.get_transforms()
+    print(base_transforms)
 
     train_dataloader, validation_dataloader, test_dataloader, num_classes, label_encoder = get_dataloaders(
         data_dir=BASE_CONFIG["data_dir"],
@@ -74,7 +79,7 @@ for mode in ["segmented", "background", "blurred", "noisy", "random"]:
         cache_dir=BASE_CONFIG["cache_dir"],
         train_process_fn=base_transforms,
         val_process_fn=base_transforms,
-        mode=mode,
+        mode="background",
     )
 
     model = VielleichtguarModel(
@@ -120,8 +125,7 @@ for mode in ["segmented", "background", "blurred", "noisy", "random"]:
             f"val/loss: {validation_loss:>8.4f} | ",
             f"val/mAP: {validation_map:>7.4f} | ",
             f"lr: {optimizer.param_groups[0]['lr']:>7.1e} | ",
-            f"eta: {max(0,eta)/60:.1f} min | " if max(0, eta) > 60 else f"eta: {max(0,eta):.1f} sec | ",
-            f"patience: {patience_counter}/{EXPERIMENT_CONFIG['patience']}",
+            f"eta: {max(0,eta)/60:.1f} min" if max(0, eta) > 60 else f"eta: {max(0,eta):.1f} sec",
             sep="",
         )
 
@@ -141,7 +145,7 @@ for mode in ["segmented", "background", "blurred", "noisy", "random"]:
             patience_counter = 0
             model.save_model(
                 checkpoint_path,
-                with_backbone=True,
+                with_backbone=False,
                 with_criterion=False,
             )
         else:

@@ -111,6 +111,43 @@ def get_resize_transform(image_size: int):
     return resize_transform
 
 
+def segment_background(img, background_color=(0, 0, 0)):
+    bg = Image.new("RGB", img.size, background_color)
+    bg.paste(img, mask=img.split()[3])
+    return bg
+
+
+def with_background(img):
+    return img.convert("RGB")
+
+
+def blurred_background(img, blur_radius=1000):
+    blurred_img = img.convert("RGB").filter(ImageFilter.GaussianBlur(radius=blur_radius))
+    r, g, b, a = img.split()
+    final_img = Image.composite(img, blurred_img, a)
+    return final_img
+
+
+def noisy_background(img):
+    r, g, b, a = img.split()
+    img_np = np.array(img.convert("RGB"))
+    img_rgb_np = np.array(img.convert("RGB"))
+    noise = np.random.randint(0, 255, (img.height, img.width, 3), dtype=np.int16)
+    noisy_img_np = np.clip(img_rgb_np + noise, 0, 255).astype(np.uint8)
+    noisy_img_np = img_np + np.clip(noisy_img_np, 0, 255).astype(np.uint8)
+    noisy_img = Image.fromarray(noisy_img_np, mode="RGB")
+    final_img = Image.composite(img.convert("RGB"), noisy_img, a)
+    return final_img
+
+
+def random_background(img):
+    r, g, b, a = img.split()
+    noise = np.random.randint(0, 256, (img.height, img.width, 3), dtype=np.uint8)
+    noisy_img = Image.fromarray(noise, mode="RGB")
+    final_img = Image.composite(img.convert("RGB"), noisy_img, a)
+    return final_img
+
+
 class ImageDataset(Dataset):
     def __init__(
         self,
@@ -173,37 +210,19 @@ class ImageDataset(Dataset):
         # Re-create the image from source
 
         if self.mode == "segmented":
-            img = Image.open(image_path).convert("RGBA")
-            black_bg = Image.new("RGB", img.size, (0, 0, 0))
-            black_bg.paste(img, mask=img.split()[3])  # 3 is the alpha channel
-            processed_img = self.resize_transform(black_bg)
+            img = segment_background(Image.open(image_path).convert("RGBA"))
+            processed_img = self.resize_transform(img)
         elif self.mode == "blurred":
-            img = Image.open(image_path).convert("RGBA")
-            r, g, b, a = img.split()
-            blurred_img = img.copy().filter(ImageFilter.GaussianBlur(radius=15))
-            final_img = Image.composite(img, blurred_img, a)
-            processed_img = self.resize_transform(final_img.convert("RGB"))
+            img = blurred_background(Image.open(image_path).convert("RGBA"))
+            processed_img = self.resize_transform(img)
         elif self.mode == "noisy":
-            img = Image.open(image_path).convert("RGBA")
-            r, g, b, a = img.split()
-            img_np = np.array(img)
-            noise = np.random.normal(0, 25, img_np.shape).astype(np.uint8)
-            noisy_img_np = np.clip(img_np + noise, 0, 255).astype(np.uint8)
-            noisy_img = Image.fromarray(noisy_img_np)
-            final_img = Image.composite(img, noisy_img, a)
-            processed_img = self.resize_transform(final_img.convert("RGB"))
+            img = noisy_background(Image.open(image_path).convert("RGBA"))
+            processed_img = self.resize_transform(img)
         elif self.mode == "random":
-            img = Image.open(image_path).convert("RGBA")
-            r, g, b, a = img.split()
-            img_np = np.array(img)
-            random_pixels = np.random.randint(0, 256, img_np.shape).astype(np.uint8)
-            random_img_np = img_np.copy()
-            random_img_np[a.numpy() == 0] = random_pixels[a.numpy() == 0]
-            random_img = Image.fromarray(random_img_np)
-            final_img = Image.composite(img, random_img, a)
-            processed_img = self.resize_transform(final_img.convert("RGB"))
-        else:
-            img = Image.open(image_path).convert("RGB")
+            img = random_background(Image.open(image_path).convert("RGBA"))
+            processed_img = self.resize_transform(img)
+        elif self.mode == "background":
+            img = with_background(Image.open(image_path).convert("RGBA"))
             img = self.resize_transform(img)
             processed_img = img
 
