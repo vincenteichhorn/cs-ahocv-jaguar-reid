@@ -83,6 +83,66 @@ class EmbeddingProjection(nn.Module):
         return self.embedding_projection(x)
 
 
+class HypersphericalProjection(nn.Module):
+    """
+    Projects embeddings onto the unit hypersphere via L2 normalization.
+    This makes the embedding space explicitly hyperspherical, where cosine
+    similarity is the natural distance metric.
+    """
+
+    def __init__(self, input_dim=1536, hidden_dim=512, output_dim=256, dropout=0.3, n_layers=2):
+        super().__init__()
+        self.projection = EmbeddingProjection(
+            input_dim=input_dim,
+            hidden_dim=hidden_dim,
+            output_dim=output_dim,
+            dropout=dropout,
+            n_layers=n_layers,
+        )
+
+    def forward(self, x):
+        embeddings = self.projection(x)
+        return F.normalize(embeddings, p=2, dim=1)
+
+
+class HyperbolicProjection(nn.Module):
+    """
+    Projects embeddings into the Poincaré ball model of hyperbolic space
+    via the exponential map at the origin. Hyperbolic spaces naturally
+    capture hierarchical structure, which may benefit re-identification
+    tasks with fine-grained identity distinctions.
+
+    The curvature parameter controls the "radius" of the Poincaré ball:
+    higher curvature → smaller ball → more hyperbolic distortion.
+    """
+
+    def __init__(self, input_dim=1536, hidden_dim=512, output_dim=256, dropout=0.3, n_layers=2, curvature=1.0, max_norm=0.95):
+        super().__init__()
+        self.projection = EmbeddingProjection(
+            input_dim=input_dim,
+            hidden_dim=hidden_dim,
+            output_dim=output_dim,
+            dropout=dropout,
+            n_layers=n_layers,
+        )
+        self.curvature = curvature
+        self.max_norm = max_norm  # clip to stay safely inside the ball
+
+    def exp_map_zero(self, v):
+        """Exponential map at the origin of the Poincaré ball."""
+        sqrt_c = self.curvature ** 0.5
+        v_norm = v.norm(dim=-1, keepdim=True).clamp(min=1e-7)
+        return torch.tanh(sqrt_c * v_norm) * v / (sqrt_c * v_norm)
+
+    def forward(self, x):
+        v = self.projection(x)  # tangent vector at origin
+        h = self.exp_map_zero(v)
+        # Clip norm to stay strictly inside the ball for numerical stability
+        h_norm = h.norm(dim=-1, keepdim=True)
+        h = torch.where(h_norm > self.max_norm, h * self.max_norm / h_norm, h)
+        return h
+
+
 class EmbeddingModel(nn.Module):
 
     def __init__(self, model_name: str, freeze=True, cache_folder="./embeddings", use_caching: bool = True, *args, **kwargs):

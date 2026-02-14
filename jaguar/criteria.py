@@ -165,3 +165,81 @@ class FocalArcFaceCriterion(nn.Module):
         logits = self.arcface(embeddings, labels)
         loss = self.focal_loss(logits, labels)
         return loss
+
+
+class HyperbolicArcFaceCriterion(nn.Module):
+    """
+    ArcFace-style classification loss for embeddings living in the
+    Poincaré ball.  Instead of using cosine similarity (natural on the
+    hypersphere), this computes similarity from the negative Poincaré
+    distance between embeddings and learnable class prototypes that
+    also live in the ball.
+    """
+
+    def __init__(self, embedding_dim, num_classes, margin=0.5, scale=64.0, curvature=1.0):
+        super().__init__()
+        self.embedding_dim = embedding_dim
+        self.num_classes = num_classes
+        self.margin = margin
+        self.scale = scale
+        self.curvature = curvature
+
+        # Class prototypes in tangent space (mapped to ball at forward time)
+        self.weight = nn.Parameter(torch.FloatTensor(num_classes, embedding_dim))
+        nn.init.xavier_uniform_(self.weight)
+
+        self.cos_m = math.cos(margin)
+        self.sin_m = math.sin(margin)
+        self.th = math.cos(math.pi - margin)
+        self.mm = math.sin(math.pi - margin) * margin
+
+        self.cross_entropy = nn.CrossEntropyLoss()
+
+    def _exp_map_zero(self, v):
+        sqrt_c = self.curvature ** 0.5
+        v_norm = v.norm(dim=-1, keepdim=True).clamp(min=1e-7)
+        return torch.tanh(sqrt_c * v_norm) * v / (sqrt_c * v_norm)
+
+    def _poincare_distance(self, x, y):
+        """Poincaré distance between points x and y in the ball."""
+        c = self.curvature
+        diff = x - y
+        diff_norm_sq = diff.pow(2).sum(dim=-1)
+        x_norm_sq = x.pow(2).sum(dim=-1).clamp(max=1 - 1e-5)
+        y_norm_sq = y.pow(2).sum(dim=-1).clamp(max=1 - 1e-5)
+        denom = (1 - c * x_norm_sq) * (1 - c * y_norm_sq)
+        arg = 1 + 2 * c * diff_norm_sq / denom.clamp(min=1e-7)
+        return torch.acosh(arg.clamp(min=1.0 + 1e-7)) / (c ** 0.5)
+
+    def forward(self, embeddings, labels):
+        # Map class prototypes into the Poincaré ball
+        prototypes = self._exp_map_zero(self.weight)
+        proto_norm = prototypes.norm(dim=-1, keepdim=True)
+        prototypes = torch.where(proto_norm > 0.95, prototypes * 0.95 / proto_norm, prototypes)
+
+        # Compute pairwise Poincaré distances → convert to similarity
+        # embeddings: (B, D), prototypes: (C, D) → distances: (B, C)
+        dists = torch.stack([
+            self._poincare_distance(embeddings, prototypes[j].unsqueeze(0))
+            for j in range(self.num_classes)
+        ], dim=1)
+
+        # Convert distances to cosine-like similarities for ArcFace margin
+        # Using exp(-d) as similarity, then normalizing to [-1, 1] range
+        sims = torch.exp(-dists)
+        # Normalize to approximate cosine range for margin arithmetic
+        cosine = 2 * sims - 1
+        cosine = cosine.clamp(-1.0, 1.0)
+
+        sine = torch.sqrt((1.0 - cosine.pow(2)).clamp(min=1e-7))
+        phi = cosine * self.cos_m - sine * self.sin_m
+        phi = torch.where(cosine > self.th, phi, cosine - self.mm)
+
+        one_hot = torch.zeros_like(cosine)
+        one_hot.scatter_(1, labels.view(-1, 1).long(), 1)
+
+        output = (one_hot * phi) + ((1.0 - one_hot) * cosine)
+        output = output * self.scale
+
+        loss = self.cross_entropy(output, labels)
+        return loss
