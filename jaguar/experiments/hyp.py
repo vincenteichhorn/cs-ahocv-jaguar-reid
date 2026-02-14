@@ -20,11 +20,11 @@ SWEEP_CONFIG = {
     "metric": {"name": "val/mAP", "goal": "maximize"},
     "parameters": {
         "learning_rate": {"distribution": "log_uniform_values", "min": 1e-5, "max": 5e-4},
-        "backbone_lr_mult": {"values": [0.1, 0.01]},  # Backbone trains slower than head
+        "backbone_lr_mult": {"distribution": "log_uniform_values", "min": 0.001, "max": 0.2},
         "arcface_margin": {"distribution": "uniform", "min": 0.3, "max": 0.5},
-        "arcface_scale": {"values": [32.0, 64.0]},
-        "weight_decay": {"values": [1e-4, 1e-3]},
-        "dropout": {"values": [0.2, 0.3, 0.4]},
+        "arcface_scale": {"distribution": "uniform", "min": 16.0, "max": 64.0},
+        "weight_decay": {"distribution": "log_uniform_values", "min": 1e-5, "max": 1e-2},
+        "dropout": {"values": [0.0, 0.1, 0.2, 0.3, 0.4]},
         "batch_size": {"values": [16, 32]},
     },
 }
