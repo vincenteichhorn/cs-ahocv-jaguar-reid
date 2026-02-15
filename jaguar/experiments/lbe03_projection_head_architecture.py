@@ -9,14 +9,14 @@ from pathlib import Path
 import numpy as np
 import wandb
 
-from jaguar.components import DINOv3, DINOv3FM, GeMPooling, VielleichtguarModel, EmbeddingProjection
+from jaguar.components import DINOv3, VielleichtguarModel, EmbeddingProjection
 from jaguar.criteria import ArcFaceCriterion
 from jaguar.datasets import get_dataloaders
 from jaguar.submission import build_submission
 from jaguar.train import train_epoch, validate_epoch
 
 PROJECT = "jaguar-reid-josefandvincent"
-GROUP = "06_embedding_projection"
+GROUP = "lbe03_projection_head_architecture"
 
 BASE_CONFIG = {
     "random_seed": 42,
@@ -89,6 +89,7 @@ for hidden_dim, n_layers in [(256, 2), (256, 3), (256, 4), (512, 2), (512, 3), (
                 hidden_dim=EXPERIMENT_CONFIG["hidden_dim"],
                 output_dim=EXPERIMENT_CONFIG["output_dim"],
                 dropout=EXPERIMENT_CONFIG["dropout"],
+                n_layers=EXPERIMENT_CONFIG["n_layers"],
             ),
         ),
         criterion=ArcFaceCriterion(

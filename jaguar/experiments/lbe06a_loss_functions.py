@@ -17,7 +17,7 @@ from jaguar.submission import build_submission
 from jaguar.train import train_epoch, validate_epoch
 
 PROJECT = "jaguar-reid-josefandvincent"
-GROUP = "03_loss_functions"
+GROUP = "lbe06a_loss_functions"
 
 BASE_CONFIG = {
     "random_seed": 42,

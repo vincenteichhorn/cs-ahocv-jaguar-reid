@@ -4,23 +4,24 @@ import torch
 import torch.nn as nn
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import ReduceLROnPlateau
+import torchvision.transforms.v2 as v2
 from dotenv import load_dotenv
 from pathlib import Path
 import numpy as np
 import wandb
 
-from jaguar.components import DINOv3FM, GeMPooling, VielleichtguarModel, EmbeddingProjection
+from jaguar.components import DINOv3, DINOv3FM, GeMPooling, VielleichtguarModel, EmbeddingProjection
 from jaguar.criteria import ArcFaceCriterion
 from jaguar.datasets import get_dataloaders
 from jaguar.submission import build_submission
 from jaguar.train import train_epoch, validate_epoch
 
 PROJECT = "jaguar-reid-josefandvincent"
-GROUP = "05_gem_pooling"
-RUN_NAME = f"{GROUP}-dinov3fm-gem-batchnorm-projection-arcface"
+GROUP = "_test"
+RUN_NAME = f"{GROUP}-baba"
 
 BASE_CONFIG = {
-    "random_seed": 42,
+    "random_seed": 456,
     "data_dir": Path("./data"),  # Path("/kaggle/input/jaguar-re-id"),
     "checkpoint_dir": Path("checkpoints"),
     "cache_dir": Path("./cache"),
@@ -30,17 +31,16 @@ BASE_CONFIG = {
 
 EXPERIMENT_CONFIG = {
     "epochs": 100,
-    "batch_size": 64,
+    "batch_size": 32,
     "image_size": 256,
     "hidden_dim": 512,
     "output_dim": 256,
     "dropout": 0.3,
     "weight_decay": 1e-4,
-    "learning_rate": 5e-4,
+    "learning_rate": 1e-4,
     "arcface_margin": 0.5,
     "arcface_scale": 64.0,
     "patience": 10,
-    "train_backbone": False,
 }
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -53,14 +53,22 @@ load_dotenv()
 # os.environ["WANDB_API_KEY"] = user_secrets.get_secret("wandb_token")
 
 wandb.login(key=os.getenv("WANDB_API_KEY"))
-wandb.init(project=PROJECT, config={**EXPERIMENT_CONFIG, **BASE_CONFIG}, group=GROUP, name=RUN_NAME)
+wandb.init(project=PROJECT, config=EXPERIMENT_CONFIG, group=GROUP, name=RUN_NAME)
 
 BASE_CONFIG["checkpoint_dir"].mkdir(exist_ok=True)
 checkpoint_path = BASE_CONFIG["checkpoint_dir"] / f"{RUN_NAME}_best.pth"
 submission_path = BASE_CONFIG["checkpoint_dir"] / f"{RUN_NAME}_submission.csv"
 
-backbone = DINOv3FM(freeze=not EXPERIMENT_CONFIG["train_backbone"], cache_folder=BASE_CONFIG["embeddings_dir"], use_caching=False)
+backbone = DINOv3(freeze=False, cache_folder=BASE_CONFIG["embeddings_dir"], use_caching=False)
 base_transforms = backbone.get_transforms()
+augmentation_transforms = v2.Compose(
+    [
+        v2.RandomHorizontalFlip(p=0.5),
+        v2.RandomAffine(degrees=10, translate=(0.05, 0.05), scale=(0.95, 1.05)),
+        v2.RandomErasing(p=0.7, scale=(0.02, 0.25), ratio=(0.3, 3.3), value=0),
+        *base_transforms.transforms,
+    ]
+)
 
 train_dataloader, validation_dataloader, test_dataloader, num_classes, label_encoder = get_dataloaders(
     data_dir=BASE_CONFIG["data_dir"],
@@ -69,7 +77,7 @@ train_dataloader, validation_dataloader, test_dataloader, num_classes, label_enc
     batch_size=EXPERIMENT_CONFIG["batch_size"],
     image_size=EXPERIMENT_CONFIG["image_size"],
     cache_dir=BASE_CONFIG["cache_dir"],
-    train_process_fn=base_transforms,
+    train_process_fn=augmentation_transforms,
     val_process_fn=base_transforms,
     mode="background",
 )
@@ -77,8 +85,6 @@ train_dataloader, validation_dataloader, test_dataloader, num_classes, label_enc
 model = VielleichtguarModel(
     backbone=backbone,
     layers=nn.Sequential(
-        GeMPooling(),
-        nn.BatchNorm1d(backbone.out_dim()),
         EmbeddingProjection(
             input_dim=backbone.out_dim(),
             hidden_dim=EXPERIMENT_CONFIG["hidden_dim"],
@@ -123,7 +129,6 @@ for epoch in range(EXPERIMENT_CONFIG["epochs"]):
         f"lr: {optimizer.param_groups[0]['lr']:>7.1e} | ",
         f"eta: {max(0,eta)/60:.1f} min | " if max(0, eta) > 60 else f"eta: {max(0,eta):.1f} sec | ",
         f"patience: {patience_counter}/{EXPERIMENT_CONFIG['patience']} | ",
-        f"gem/p: {model.layers[0].p.item():.4f}",
         sep="",
     )
 
@@ -134,7 +139,6 @@ for epoch in range(EXPERIMENT_CONFIG["epochs"]):
             "val/loss": validation_loss,
             "val/mAP": validation_map,
             "lr": optimizer.param_groups[0]["lr"],
-            "gem_p": model.layers[0].p.item(),
         }
     )
 
@@ -144,7 +148,7 @@ for epoch in range(EXPERIMENT_CONFIG["epochs"]):
         patience_counter = 0
         model.save_model(
             checkpoint_path,
-            with_backbone=EXPERIMENT_CONFIG["train_backbone"],
+            with_backbone=True,
             with_criterion=False,
         )
     else:
@@ -154,7 +158,7 @@ for epoch in range(EXPERIMENT_CONFIG["epochs"]):
         break
 
 model.load_model(checkpoint_path)
-build_submission(submission_path, model, test_dataloader, device)
+build_submission(submission_path, model, test_dataloader, device, query_expansion_enabled=True, tta_enabled=True, k_reciprocal_reranking_enabled=True)
 
 wandb.run.summary["best_val_mAP"] = best_map
 wandb.run.summary["best_epoch"] = best_epoch

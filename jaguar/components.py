@@ -1,5 +1,6 @@
 from pathlib import Path
 from typing import Tuple, Union
+import warnings
 import torch
 import torch.nn as nn
 import timm
@@ -155,6 +156,8 @@ class EmbeddingModel(nn.Module):
         self.use_caching = use_caching
         if freeze:
             self.freeze_weights()
+        if not freeze and use_caching:
+            warnings.warn("Warning: Caching a non frozen model may lead to inconsistent results.")
 
     def get_transforms(self, is_training=False) -> transforms.Compose:
         data_config = timm.data.resolve_model_data_config(self.model)

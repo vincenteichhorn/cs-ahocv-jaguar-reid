@@ -17,7 +17,7 @@ from jaguar.submission import build_submission
 from jaguar.train import train_epoch, validate_epoch
 
 PROJECT = "jaguar-reid-josefandvincent"
-GROUP = "09c_background_interventions"
+GROUP = "eda02_background_interventions"
 
 BASE_CONFIG = {
     "random_seed": 42,
@@ -37,7 +37,7 @@ for mode in ["segmented", "background", "blurred", "noisy", "random"]:
         "output_dim": 256,
         "dropout": 0.3,
         "weight_decay": 1e-4,
-        "learning_rate": 5e-4,
+        "learning_rate": 1e-4,
         "arcface_margin": 0.5,
         "arcface_scale": 64.0,
         "patience": 10,
@@ -62,7 +62,7 @@ for mode in ["segmented", "background", "blurred", "noisy", "random"]:
     submission_path = BASE_CONFIG["checkpoint_dir"] / f"{RUN_NAME}_submission.csv"
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    backbone = DINOv3(freeze=False, cache_folder=BASE_CONFIG["embeddings_dir"], use_caching=False)
+    backbone = DINOv3(freeze=True, cache_folder=BASE_CONFIG["embeddings_dir"], use_caching=True)
     base_transforms = backbone.get_transforms()
 
     train_dataloader, validation_dataloader, test_dataloader, num_classes, label_encoder = get_dataloaders(
@@ -141,7 +141,7 @@ for mode in ["segmented", "background", "blurred", "noisy", "random"]:
             patience_counter = 0
             model.save_model(
                 checkpoint_path,
-                with_backbone=True,
+                with_backbone=False,
                 with_criterion=False,
             )
         else:
