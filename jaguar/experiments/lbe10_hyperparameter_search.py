@@ -1,5 +1,3 @@
-import os
-import time
 import torch
 import torch.nn as nn
 from torch.optim import AdamW
@@ -8,9 +6,8 @@ from pathlib import Path
 import numpy as np
 import wandb
 
-# Assuming your jaguar module is in the python path
 from jaguar.components import DINOv3, EmbeddingProjection, VielleichtguarModel
-from jaguar.criteria import ArcFaceCriterion
+from jaguar.criteria import FocalArcFaceCriterion
 from jaguar.datasets import get_dataloaders
 from jaguar.train import train_epoch, validate_epoch
 
@@ -24,6 +21,8 @@ SWEEP_CONFIG = {
         "arcface_margin": {"distribution": "uniform", "min": 0.3, "max": 0.5},
         "arcface_scale": {"distribution": "uniform", "min": 16.0, "max": 64.0},
         "weight_decay": {"distribution": "log_uniform_values", "min": 1e-5, "max": 1e-2},
+        "focal_arcface_gamma": {"distribution": "uniform", "min": 0.0, "max": 5.0},
+        "hidden_dim": {"values": [256, 512, 1024]},
         "dropout": {"values": [0.0, 0.1, 0.2, 0.3, 0.4]},
         "batch_size": {"values": [16, 32]},
     },
@@ -40,7 +39,6 @@ BASE_CONFIG = {
     "validation_split_size": 0.2,
     "image_size": 256,
     "output_dim": 256,
-    "hidden_dim": 512,
 }
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -48,7 +46,7 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 
 def train():
     # Initialize W&B for this specific trial
-    with wandb.init() as run:
+    with wandb.init(group="lbe10_hyperparamter_search") as run:
         config = run.config
 
         # Set seeds for reproducibility within the trial
@@ -76,7 +74,7 @@ def train():
             cache_dir=BASE_CONFIG["cache_dir"],
             train_process_fn=augmentation_transforms,
             val_process_fn=base_transforms,
-            mode="background",
+            mode="segmented",
         )
 
         # --- Model Setup ---
@@ -85,16 +83,17 @@ def train():
             layers=nn.Sequential(
                 EmbeddingProjection(
                     input_dim=backbone.out_dim(),
-                    hidden_dim=BASE_CONFIG["hidden_dim"],
+                    hidden_dim=config.hidden_dim,
                     output_dim=BASE_CONFIG["output_dim"],
                     dropout=config.dropout,
                 ),
             ),
-            criterion=ArcFaceCriterion(
+            criterion=FocalArcFaceCriterion(
                 embedding_dim=BASE_CONFIG["output_dim"],
                 num_classes=num_classes,
                 margin=config.arcface_margin,
                 scale=config.arcface_scale,
+                gamma=config.focal_arcface_gamma,
             ),
         ).to(device)
 
@@ -110,8 +109,8 @@ def train():
         # --- Training Loop ---
         best_map = 0.0
         # For sweeps, we often run fewer epochs to explore more combinations
-        max_epochs = 30
-        patience = 7
+        max_epochs = 100
+        patience = 10
         patience_counter = 0
 
         for epoch in range(max_epochs):

@@ -11,14 +11,14 @@ import numpy as np
 import wandb
 
 from jaguar.components import DINOv3, VielleichtguarModel, EmbeddingProjection
-from jaguar.criteria import ArcFaceCriterion, FocalArcFaceCriterion
+from jaguar.criteria import FocalArcFaceCriterion
 from jaguar.datasets import get_dataloaders
 from jaguar.submission import build_submission
 from jaguar.train import train_epoch, validate_epoch
 
 PROJECT = "jaguar-reid-josefandvincent"
-GROUP = "_test"
-RUN_NAME = f"{GROUP}-baba"
+GROUP = "final"
+RUN_NAME = f"{GROUP}-final"
 
 BASE_CONFIG = {
     "random_seed": 456,
@@ -29,6 +29,7 @@ BASE_CONFIG = {
     "validation_split_size": 0.2,
 }
 
+# fallen-sweep-14
 EXPERIMENT_CONFIG = {
     "epochs": 100,
     "batch_size": 32,
@@ -36,16 +37,15 @@ EXPERIMENT_CONFIG = {
     "hidden_dim": 1024,
     "n_layers": 3,
     "output_dim": 256,
-    "dropout": 0.1,
-    "weight_decay": 7e-3,
-    "learning_rate": 4e-4,
-    "arcface_margin": 0.47,
-    "arcface_scale": 40.0,
+    "dropout": 0.2,
+    "weight_decay": 0.00014063618588945403,
+    "learning_rate": 0.00015993740640441972,
+    "arcface_margin": 0.3600732565980775,
+    "arcface_scale": 17.570478141393707,
     "patience": 10,
-    "backbone_lr_multiplier": 0.2,
+    "backbone_lr_multiplier": 0.054143381201692535,
     "background_intervention": "segmented",
-    "focal_arcface_gamma": 2.0,
-    "max_LR": 1e-3,
+    "focal_arcface_gamma": 2.111056877247217,
 }
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -111,22 +111,25 @@ wandb.log(
     {"trainable_parameters": sum(p.numel() for p in model.parameters() if p.requires_grad), "total_parameters": sum(p.numel() for p in model.parameters())}
 )
 
-
-optimizer = AdamW(model.parameters(), lr=EXPERIMENT_CONFIG["learning_rate"], weight_decay=EXPERIMENT_CONFIG["weight_decay"])
-lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(
-    optimizer, max_lr=EXPERIMENT_CONFIG["max_LR"], steps_per_epoch=len(train_dataloader), epochs=EXPERIMENT_CONFIG["epochs"]
-)
+params = [
+    {"params": model.backbone.parameters(), "lr": EXPERIMENT_CONFIG["learning_rate"] * EXPERIMENT_CONFIG["backbone_lr_multiplier"]},
+    {"params": model.layers.parameters(), "lr": EXPERIMENT_CONFIG["learning_rate"]},
+    {"params": model.criterion.parameters(), "lr": EXPERIMENT_CONFIG["learning_rate"]},
+]
+optimizer = AdamW(params, weight_decay=EXPERIMENT_CONFIG["weight_decay"])
+lr_scheduler = ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=3)
 
 best_epoch, best_map, patience_counter, total_duration, eta = 0, 0.0, 0, 0.0, 0.0
 for epoch in range(EXPERIMENT_CONFIG["epochs"]):
 
     start = time.time()
-    train_loss = train_epoch(model, train_dataloader, optimizer, device, lr_scheduler)
+    train_loss = train_epoch(model, train_dataloader, optimizer, device)
     validation_loss, validation_map = validate_epoch(model, validation_dataloader, device)
     end = time.time()
     epoch_time = end - start
     total_duration += epoch_time
     eta = (epoch_time if epoch == 0 else 0.9 * (eta / (EXPERIMENT_CONFIG["epochs"] - epoch)) + 0.1 * epoch_time) * (EXPERIMENT_CONFIG["epochs"] - epoch - 1)
+    lr_scheduler.step(validation_loss)
 
     print(
         f"epoch: {epoch+1:>2}/{EXPERIMENT_CONFIG['epochs']} | ",
