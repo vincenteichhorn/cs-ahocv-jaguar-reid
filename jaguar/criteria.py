@@ -196,7 +196,7 @@ class HyperbolicArcFaceCriterion(nn.Module):
         self.cross_entropy = nn.CrossEntropyLoss()
 
     def _exp_map_zero(self, v):
-        sqrt_c = self.curvature ** 0.5
+        sqrt_c = self.curvature**0.5
         v_norm = v.norm(dim=-1, keepdim=True).clamp(min=1e-7)
         return torch.tanh(sqrt_c * v_norm) * v / (sqrt_c * v_norm)
 
@@ -209,7 +209,7 @@ class HyperbolicArcFaceCriterion(nn.Module):
         y_norm_sq = y.pow(2).sum(dim=-1).clamp(max=1 - 1e-5)
         denom = (1 - c * x_norm_sq) * (1 - c * y_norm_sq)
         arg = 1 + 2 * c * diff_norm_sq / denom.clamp(min=1e-7)
-        return torch.acosh(arg.clamp(min=1.0 + 1e-7)) / (c ** 0.5)
+        return torch.acosh(arg.clamp(min=1.0 + 1e-7)) / (c**0.5)
 
     def forward(self, embeddings, labels):
         # Map class prototypes into the Poincaré ball
@@ -219,10 +219,7 @@ class HyperbolicArcFaceCriterion(nn.Module):
 
         # Compute pairwise Poincaré distances → convert to similarity
         # embeddings: (B, D), prototypes: (C, D) → distances: (B, C)
-        dists = torch.stack([
-            self._poincare_distance(embeddings, prototypes[j].unsqueeze(0))
-            for j in range(self.num_classes)
-        ], dim=1)
+        dists = torch.stack([self._poincare_distance(embeddings, prototypes[j].unsqueeze(0)) for j in range(self.num_classes)], dim=1)
 
         # Convert distances to cosine-like similarities for ArcFace margin
         # Using exp(-d) as similarity, then normalizing to [-1, 1] range

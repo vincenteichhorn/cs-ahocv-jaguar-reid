@@ -1,3 +1,4 @@
+# %%
 import os
 import time
 import torch
@@ -16,6 +17,7 @@ from jaguar.datasets import get_dataloaders
 from jaguar.submission import build_submission
 from jaguar.train import train_epoch, validate_epoch
 
+# %%
 PROJECT = "jaguar-reid-josefandvincent"
 GROUP = "final"
 RUN_NAME = f"{GROUP}-final"
@@ -29,7 +31,6 @@ BASE_CONFIG = {
     "validation_split_size": 0.2,
 }
 
-# fallen-sweep-14
 EXPERIMENT_CONFIG = {
     "epochs": 100,
     "batch_size": 32,
@@ -48,6 +49,7 @@ EXPERIMENT_CONFIG = {
     "focal_arcface_gamma": 2.111056877247217,
 }
 
+# %%
 device = "cuda" if torch.cuda.is_available() else "cpu"
 torch.manual_seed(BASE_CONFIG["random_seed"])
 np.random.seed(BASE_CONFIG["random_seed"])
@@ -64,6 +66,7 @@ BASE_CONFIG["checkpoint_dir"].mkdir(exist_ok=True)
 checkpoint_path = BASE_CONFIG["checkpoint_dir"] / f"{RUN_NAME}_best.pth"
 submission_path = BASE_CONFIG["checkpoint_dir"] / f"{RUN_NAME}_submission.csv"
 
+# %%
 backbone = DINOv3(freeze=False, cache_folder=BASE_CONFIG["embeddings_dir"], use_caching=False)
 base_transforms = backbone.get_transforms()
 augmentation_transforms = v2.Compose(
@@ -110,6 +113,7 @@ model = VielleichtguarModel(
 wandb.log(
     {"trainable_parameters": sum(p.numel() for p in model.parameters() if p.requires_grad), "total_parameters": sum(p.numel() for p in model.parameters())}
 )
+# %%
 
 params = [
     {"params": model.backbone.parameters(), "lr": EXPERIMENT_CONFIG["learning_rate"] * EXPERIMENT_CONFIG["backbone_lr_multiplier"]},
@@ -166,6 +170,7 @@ for epoch in range(EXPERIMENT_CONFIG["epochs"]):
 
     if patience_counter >= EXPERIMENT_CONFIG["patience"]:
         break
+# %%
 
 model.load_model(checkpoint_path)
 build_submission(submission_path, model, test_dataloader, device, query_expansion_enabled=True, tta_enabled=True, k_reciprocal_reranking_enabled=True)
